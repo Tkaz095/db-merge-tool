@@ -1,95 +1,119 @@
-import knex, { Knex } from 'knex';
-import { dbConfig } from './config';
-
-// 1. Khởi tạo kết nối với Type safety
-const sourceDB: Knex = knex(dbConfig.oldDB);
-const targetDB: Knex = knex(dbConfig.newDB);
-
-/**
- * Hàm kiểm tra xem DB mới có thiếu cột nào từ DB cũ không
- */
-async function checkMissingFields(tableName: string) {
-  const oldCols = await sourceDB(tableName).columnInfo();
-  const newCols = await targetDB(tableName).columnInfo();
-
-  const oldFields = Object.keys(oldCols);
-  const newFields = Object.keys(newCols);
-
-  const missing = oldFields.filter(f => !newFields.includes(f));
-  if (missing.length > 0) {
-    console.warn(`⚠️ Chú ý: Bảng [${tableName}] ở DB mới thiếu các cột:`, missing);
-  }
-}
+﻿import knex, { Knex } from 'knex';
+import { promptDbConfig } from './config';
+import { syncTable, SyncOptions, compareTable, CompareResult, getAllTables, getTablePK, getTableOrder } from './sync';
 
 async function startMigration() {
+  // ── Nhập URL từ lead ───────────────────────────────────────────────
+  const dbConfig = await promptDbConfig();
+  const sourceDB: Knex = knex(dbConfig.oldDB);
+  const targetDB: Knex = knex(dbConfig.newDB);
+
+  const sync = (tableName: string, options: SyncOptions) =>
+    syncTable(sourceDB, targetDB, tableName, options);
+
   try {
-    console.log("🚀 BẮT ĐẦU QUÁ TRÌNH MERGE DỮ LIỆU...");
+    console.log('🚀 BẮT ĐẦU QUÁ TRÌNH SYNC DỮ LIỆU...\n');
 
-    // --- BƯỚC 1: MERGE BẢNG USERS ---
-    await checkMissingFields('users');
-    const oldUsers = await sourceDB('users').select('*');
-    console.log(`- Đang xử lý ${oldUsers.length} người dùng...`);
+    // ── 1. Auto-discover: tìm tất cả bảng trong source ────────────────
+    const allTables = await getAllTables(sourceDB);
+    console.log(`📋 Tìm thấy ${allTables.length} bảng trong source DB`);
 
-    let userSuccess = 0;
-    for (const user of oldUsers) {
-      try {
-        await targetDB('users')
-          .insert({
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            password: user.password,
-            // Field mới: gán mặc định
-            status: 'active',
-            phone: user.phone || null, 
-            created_at: user.created_at || new Date()
-          })
-          .onConflict('id').merge();
-        userSuccess++;
-      } catch (e) {
-        console.error(`❌ Lỗi tại User ID ${user.id}:`, (e as Error).message);
+    // ── 2. Sắp thứ tự theo FK dependency (cha trước, con sau) ─────────
+    const orderedTables = await getTableOrder(sourceDB, allTables);
+    console.log(`📐 Đã sắp xếp thứ tự sync theo FK dependency\n`);
+
+    // ── 3. Auto-discover PK từng bảng rồi sync ────────────────────────
+    // tablePKs lưu lại để dùng cho bước compare
+    const tablePKs: Record<string, string | string[]> = {};
+
+    for (const tableName of orderedTables) {
+      const pkCols = await getTablePK(sourceDB, tableName);
+
+      if (pkCols.length === 0) {
+        // Không có PK → INSERT ON CONFLICT DO NOTHING, không delete
+        await sync(tableName, { pk: '__no_pk__', ignoreConflict: true, enableDelete: false });
+      } else {
+        const pk = pkCols.length === 1 ? pkCols[0] : pkCols;
+        tablePKs[tableName] = pk;
+        await sync(tableName, { pk });
       }
     }
-    console.log(`✅ Đã gộp thành công ${userSuccess}/${oldUsers.length} users.`);
 
-    // --- BƯỚC 2: MERGE BẢNG POSTS ---
-    await checkMissingFields('posts');
-    const oldPosts = await sourceDB('posts').select('*');
-    console.log(`- Đang xử lý ${oldPosts.length} bài viết...`);
+    console.log('\n🎊 TẤT CẢ ĐÃ HOÀN TẤT!');
 
-    let postSuccess = 0;
-    for (const post of oldPosts) {
-      try {
-        await targetDB('posts')
-          .insert({
-            id: post.id,
-            title: post.title,
-            content: post.content,
-            // Đổi tên user_id -> author_id
-            author_id: post.user_id,
-            // Field mới
-            category_id: 1, 
-            is_published: true,
-            updated_at: new Date()
-          })
-          .onConflict('id').merge();
-        postSuccess++;
-      } catch (e) {
-        console.error(`❌ Lỗi tại Post ID ${post.id}:`, (e as Error).message);
+    // ── 4. So sánh data field-by-field ────────────────────────────────
+    console.log('\n' + '='.repeat(70));
+    console.log('📊 SO SÁNH DATA: SOURCE vs TARGET (field-by-field)');
+    console.log('='.repeat(70));
+
+    let totalTables = 0;
+    let matchedTables = 0;
+
+    for (const [tableName, pk] of Object.entries(tablePKs)) {
+      totalTables++;
+      process.stdout.write(`\n🔍 ${tableName.padEnd(38)}`);
+
+      const res: CompareResult | null = await compareTable(sourceDB, targetDB, tableName, pk);
+      if (!res) {
+        process.stdout.write('⚠ bỏ qua\n');
+        continue;
+      }
+
+      if (res.match) {
+        process.stdout.write(`✅ KHỚP  (${res.sourceCount} rows, ${res.commonColumns.length} fields)\n`);
+        matchedTables++;
+      } else {
+        process.stdout.write('❌ CÓ KHÁC BIỆT\n');
+      }
+
+      if (res.sourceOnlyCols.length > 0) {
+        console.log(`   📋 Field chỉ có ở DB cũ (chưa migrate sang DB mới): [${res.sourceOnlyCols.join(', ')}]`);
+      }
+      if (res.targetOnlyCols.length > 0) {
+        console.log(`   📋 Field mới ở DB mới (chưa có data từ source):     [${res.targetOnlyCols.join(', ')}]`);
+      }
+
+      if (res.sourceCount !== res.targetCount) {
+        const diff = res.sourceCount - res.targetCount;
+        console.log(`   ❌ Số row: source=${res.sourceCount} | target=${res.targetCount} → ${diff > 0 ? 'thiếu' : 'thừa'} ${Math.abs(diff)} row`);
+      }
+
+      if (res.missingInTarget.length > 0) {
+        const preview = res.missingInTarget.slice(0, 5).map((v) => JSON.stringify(v)).join(', ');
+        const extra   = res.missingInTarget.length > 5 ? ` ... +${res.missingInTarget.length - 5} nữa` : '';
+        console.log(`   ❌ ${res.missingInTarget.length} row ở source chưa có ở target — PK: [${preview}]${extra}`);
+      }
+
+      if (res.extraInTarget.length > 0) {
+        const preview = res.extraInTarget.slice(0, 5).map((v) => JSON.stringify(v)).join(', ');
+        const extra   = res.extraInTarget.length > 5 ? ` ... +${res.extraInTarget.length - 5} nữa` : '';
+        console.log(`   ⚠  ${res.extraInTarget.length} row ở target không có ở source — PK: [${preview}]${extra}`);
+      }
+
+      if (res.fieldDiffs.length > 0) {
+        console.log(`   🔄 ${res.fieldDiffs.length} field khác nhau (hiển thị tối đa 5):`);
+        for (const diff of res.fieldDiffs.slice(0, 5)) {
+          const pkStr = Object.values(diff.pk).join(', ');
+          console.log(`      PK(${pkStr})  "${diff.field}":  source=${JSON.stringify(diff.sourceValue)}  →  target=${JSON.stringify(diff.targetValue)}`);
+        }
+        if (res.fieldDiffs.length > 5) {
+          console.log(`      ... và ${res.fieldDiffs.length - 5} field diff nữa`);
+        }
       }
     }
-    console.log(`✅ Đã gộp thành công ${postSuccess}/${oldPosts.length} posts.`);
 
-    console.log("\n🎊 TẤT CẢ ĐÃ HOÀN TẤT!");
+    console.log('\n' + '='.repeat(70));
+    console.log(`📊 KẾT QUẢ: ${matchedTables}/${totalTables} bảng khớp hoàn toàn`);
+    if (matchedTables === totalTables) {
+      console.log('✅ TẤT CẢ DATA ĐÃ ĐƯỢC SYNC CHÍNH XÁC — FIELD ĐÚNG, GIÁ TRỊ ĐÚNG!');
+    } else {
+      console.log(`❌ ${totalTables - matchedTables} bảng cần kiểm tra lại.`);
+    }
+    console.log('='.repeat(70));
 
   } catch (err) {
-    if (err instanceof Error) {
-      console.error("❌ Lỗi hệ thống:", err.message);
-    } else {
-      console.error("❌ Lỗi không xác định:", err);
-    }
+    console.error('\n❌ Lỗi hệ thống:', (err as Error).message);
   } finally {
-    // Đóng kết nối để giải phóng bộ nhớ
     await sourceDB.destroy();
     await targetDB.destroy();
     process.exit();

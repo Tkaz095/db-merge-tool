@@ -1,34 +1,61 @@
-// config.ts
 import { Knex } from 'knex';
+import { input } from '@inquirer/prompts';
 
 /**
- * Cấu hình kết nối PostgreSQL cho Neon.tech
- * Theo xác nhận từ Leader, đây là môi trường DATA TEST.
- * Chúng ta dùng chung một cấu hình cho cả Nguồn (oldDB) và Đích (newDB).
+ * Parse một PostgreSQL connection URL thành Knex config.
+ * Định dạng: postgresql://user:password@host:5432/database
  */
-const neonConnection = {
-  host: 'ep-summer-rain-aexbefe7-pooler.c-2.us-east-2.aws.neon.tech',
-  port: 5432,
-  user: 'neondb_owner',
-  password: 'npg_0pV4OAfzUqgC',
-  database: 'neondb',
-  // Neon BẮT BUỘC phải có SSL để kết nối từ bên ngoài (VS Code/Node.js)
-  ssl: { rejectUnauthorized: false },
-};
-
-export const dbConfig: { [key: string]: Knex.Config } = {
-  // DB Cũ: Nơi chứa "1 đống data" chưa được nâng cấp field
-  oldDB: {
-    client: 'pg',
-    connection: neonConnection,
-    pool: { min: 2, max: 10 }
-  },
-
-  // DB Mới: Nơi chúng ta sẽ đổ dữ liệu sau khi đã Mapping/Merge field
-  // Vì là môi trường Test, Đích cũng chính là server Neon này
-  newDB: {
-    client: 'pg',
-    connection: neonConnection,
-    pool: { min: 2, max: 10 }
+function parseConnectionUrl(url: string): Knex.PgConnectionConfig {
+  try {
+    const u = new URL(url);
+    return {
+      host:     u.hostname,
+      port:     u.port ? parseInt(u.port, 10) : 5432,
+      user:     decodeURIComponent(u.username),
+      password: decodeURIComponent(u.password),
+      database: u.pathname.replace(/^\//, ''),
+      ssl:      { rejectUnauthorized: false },
+    };
+  } catch {
+    throw new Error(
+      `URL không hợp lệ: "${url}"\n` +
+      `Định dạng đúng: postgresql://user:password@host:5432/database`
+    );
   }
-};
+}
+
+function makeKnexConfig(conn: Knex.PgConnectionConfig): Knex.Config {
+  return { client: 'pg', connection: conn, pool: { min: 2, max: 10 } };
+}
+
+/** Hỏi lead nhập 2 URL rồi trả về Knex config cho source và target */
+export async function promptDbConfig(): Promise<{ oldDB: Knex.Config; newDB: Knex.Config }> {
+  console.log('\n╔══════════════════════════════════════════════════════════╗');
+  console.log('║       DB MIGRATION TOOL — Nhập thông tin kết nối        ║');
+  console.log('╚══════════════════════════════════════════════════════════╝');
+  console.log('ℹ  Định dạng: postgresql://user:password@host:5432/database\n');
+
+  const sourceUrl = await input({
+    message: '🔴  DB Nguồn (cũ)  URL:',
+    validate: (v) => {
+      try { parseConnectionUrl(v); return true; }
+      catch (e) { return (e as Error).message; }
+    },
+  });
+
+  const targetUrl = await input({
+    message: '🟢  DB Đích  (mới) URL:',
+    validate: (v) => {
+      try { parseConnectionUrl(v); return true; }
+      catch (e) { return (e as Error).message; }
+    },
+  });
+
+  console.log('');
+
+  return {
+    oldDB: makeKnexConfig(parseConnectionUrl(sourceUrl)),
+    newDB: makeKnexConfig(parseConnectionUrl(targetUrl)),
+  };
+}
+
