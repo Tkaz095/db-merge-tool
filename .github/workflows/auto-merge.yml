@@ -1,0 +1,28 @@
+name: Daily DB Merge
+
+on:
+  schedule:
+    # 17:00 UTC tương đương 00:00 giờ Việt Nam
+    - cron: '0 17 * * *'
+  workflow_dispatch: # Cho phép bạn bấm nút chạy thử thủ công bất cứ lúc nào
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run Merge Script
+        run: npx ts-node index.ts
+        env:
+          SOURCE_DB_URL: ${{ secrets.SOURCE_DB_URL }}
+          TARGET_DB_URL: ${{ secrets.TARGET_DB_URL }}

@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/migrate.ts": {
+      "maxDuration": 300
+    }
+  }
+}
