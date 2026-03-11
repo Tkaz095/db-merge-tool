@@ -3,5 +3,11 @@
     "api/migrate.ts": {
       "maxDuration": 300
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/migrate",
+      "schedule": "0 17 * * *"
+    }
+  ]
 }
