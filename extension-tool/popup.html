@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DB Merge Tool</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 400px;
+      min-height: 360px;
+      background: #030712;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 20px;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .toast {
+      animation: fadeIn 0.25s ease-out;
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 50;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      white-space: nowrap;
+    }
+    .toast.hidden { display: none; }
+    .toast.success { background: #059669; color: #fff; }
+    .toast.error   { background: #dc2626; color: #fff; }
+
+    .card {
+      width: 100%;
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 16px;
+      padding: 28px 24px;
+    }
+
+    .card-header { margin-bottom: 24px; }
+    .card-header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+      letter-spacing: -0.01em;
+    }
+    .card-header p {
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 4px;
+    }
+
+    .fields { display: flex; flex-direction: column; gap: 16px; }
+
+    label {
+      display: block;
+      font-size: 11px;
+      font-weight: 500;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      background: #1f2937;
+      border: 1px solid #374151;
+      color: #fff;
+      font-size: 13px;
+      border-radius: 8px;
+      padding: 10px 14px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    input[type="text"]::placeholder { color: #4b5563; }
+    input[type="text"]:focus {
+      border-color: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99,102,241,0.2);
+    }
+
+    .vercel-url-row {
+      display: flex;
+      flex-direction: column;
+    }
+
+    button {
+      margin-top: 22px;
+      width: 100%;
+      background: #4f46e5;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background 0.15s;
+    }
+    button:hover:not(:disabled)  { background: #4338ca; }
+    button:active:not(:disabled) { background: #3730a3; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner.hidden { display: none; }
+
+    .btn-merge {
+      background: #065f46;
+      margin-top: 10px;
+    }
+    .btn-merge:hover:not(:disabled)  { background: #047857; }
+    .btn-merge:active:not(:disabled) { background: #064e3b; }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #1f2937;
+      margin: 20px 0 0;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <div class="card">
+    <div class="card-header">
+      <h1>DB Merge Automation Config</h1>
+      <p>Cấu hình kết nối và kích hoạt quá trình merge database.</p>
+    </div>
+
+    <div class="fields">
+      <div class="vercel-url-row">
+        <label for="vercelUrl">Vercel API URL</label>
+        <input
+          id="vercelUrl"
+          type="text"
+          placeholder="https://your-project.vercel.app"
+        />
+      </div>
+
+      <div>
+        <label for="sourceUrl">Source Database (Old) URL</label>
+        <input
+          id="sourceUrl"
+          type="text"
+          placeholder="postgres://user:password@host:5432/old_db"
+        />
+      </div>
+
+      <div>
+        <label for="targetUrl">Target Database (New) URL</label>
+        <input
+          id="targetUrl"
+          type="text"
+          placeholder="postgres://user:password@host:5432/new_db"
+        />
+      </div>
+
+      <div>
+        <label for="mergeToken">Migrate Token <span style="color:#4b5563;font-size:10px;text-transform:none;letter-spacing:0">(tuỳ chọn)</span></label>
+        <input
+          id="mergeToken"
+          type="text"
+          placeholder="Bearer token nếu server yêu cầu"
+        />
+      </div>
+    </div>
+
+    <button id="saveBtn" onclick="saveConfig()">
+      <span id="btnText">Lưu cấu hình &amp; Kích hoạt</span>
+      <div id="spinner" class="spinner hidden"></div>
+    </button>
+
+    <hr class="divider" />
+
+    <button id="mergeBtn" class="btn-merge" onclick="mergeNow()">
+      <span id="mergeBtnText">&#9889; Merge ngay</span>
+      <div id="mergeSpinner" class="spinner hidden"></div>
+    </button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
