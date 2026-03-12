@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DB Merge Automation Config</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .toast { animation: fadeIn 0.25s ease-out; }
+  </style>
+</head>
+<body class="min-h-screen bg-gray-950 flex items-center justify-center px-4">
+
+  <!-- Toast -->
+  <div id="toast" class="hidden toast fixed top-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-lg text-sm font-medium shadow-xl"></div>
+
+  <!-- Card -->
+  <div class="w-full max-w-md bg-gray-900 border border-gray-800 rounded-2xl shadow-2xl p-8">
+
+    <div class="mb-8">
+      <h1 class="text-xl font-semibold text-white tracking-tight">DB Merge Automation Config</h1>
+      <p class="text-gray-500 text-sm mt-1">Cấu hình kết nối và kích hoạt quá trình merge database.</p>
+    </div>
+
+    <div class="space-y-5">
+
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
+          Source Database (Old) URL
+        </label>
+        <input
+          id="sourceUrl"
+          type="text"
+          placeholder="postgres://user:password@host:5432/old_db"
+          class="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded-lg px-4 py-3 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+        />
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
+          Target Database (New) URL
+        </label>
+        <input
+          id="targetUrl"
+          type="text"
+          placeholder="postgres://user:password@host:5432/new_db"
+          class="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded-lg px-4 py-3 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+        />
+      </div>
+
+    </div>
+
+    <button
+      id="saveBtn"
+      onclick="saveConfig()"
+      class="mt-8 w-full bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm rounded-lg px-4 py-3 transition-colors flex items-center justify-center gap-2"
+    >
+      <span id="btnText">Lưu cấu hình &amp; Kích hoạt</span>
+      <svg id="spinner" class="hidden animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z"></path>
+      </svg>
+    </button>
+
+  </div>
+
+  <script>
+    function showToast(message, type) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = [
+        'toast fixed top-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-lg text-sm font-medium shadow-xl',
+        type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'
+      ].join(' ');
+      toast.classList.remove('hidden');
+      setTimeout(() => toast.classList.add('hidden'), 3500);
+    }
+
+    function setLoading(isLoading) {
+      const btn     = document.getElementById('saveBtn');
+      const spinner = document.getElementById('spinner');
+      const btnText = document.getElementById('btnText');
+      btn.disabled        = isLoading;
+      spinner.classList.toggle('hidden', !isLoading);
+      btnText.textContent = isLoading ? 'Đang lưu...' : 'Lưu cấu hình & Kích hoạt';
+    }
+
+    async function saveConfig() {
+      const sourceUrl = document.getElementById('sourceUrl').value.trim();
+      const targetUrl = document.getElementById('targetUrl').value.trim();
+
+      if (!sourceUrl || !targetUrl) {
+        showToast('Vui lòng điền đầy đủ cả hai URL.', 'error');
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const res = await fetch('/api/save-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sourceUrl, targetUrl })
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (res.ok) {
+          showToast(data.message || 'Cấu hình đã được lưu thành công!', 'success');
+        } else {
+          showToast(data.error || `Lỗi ${res.status}: Không thể lưu cấu hình.`, 'error');
+        }
+      } catch (err) {
+        showToast('Không thể kết nối đến server. Vui lòng thử lại.', 'error');
+      } finally {
+        setLoading(false);
+      }
+    }
+  </script>
+
+</body>
+</html>
